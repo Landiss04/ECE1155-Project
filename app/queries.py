@@ -10,7 +10,7 @@ INFO_DB = "db/info.db"
 def hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode()).hexdigest()
 
-# ATTACK 1 — Simple SQL Injection (login_vulnerable.db)
+# ATTACK 1 — Simple SQL Injection (login_vulnerable.db) ' OR '1'='1 -> bypasses login
 # Uses raw string concatenation, plaintext passwords.
 # Should be breakable with a basic OR '1'='1' injection.
 # Returns: True if login succeeds, False otherwise
