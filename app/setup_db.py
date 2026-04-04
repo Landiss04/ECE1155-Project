@@ -2,15 +2,18 @@ import hashlib
 import os
 import re
 import sqlite3
-
-from app.queries import INFO_DB
+from time import time
 
 # Database paths
 LOGIN_DB = "db/login.db"
 LOGIN_SNH = "db/login_snh.db"
 INFO_DB = "db/info.db"
+INFO_DB_SNH = "db/info_snh.db"
 
 # --- Helpers ---
+def hash_password(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode()).hexdigest()
+
 def access_info_db(username: str) -> dict:
     conn = sqlite3.connect(INFO_DB)
     cur = conn.cursor()
@@ -22,7 +25,35 @@ def access_info_db(username: str) -> dict:
     else:
         print(f"[+] Login successful for {username}. No account info found.")
 
-def update_username(new_username: str, password: str = None):
+def access_info_db_snh(username: str, malicious: bool) -> dict:
+    conn = sqlite3.connect(INFO_DB_SNH)
+    if malicious:
+        start_time = time.time()
+        # Simulate breach detection and dynamic access control by rehashing all credentials with a new salt
+        new_salt = "newsalt123" # In a real system, this would be randomly generated and stored securely
+        conn1 = sqlite3.connect(LOGIN_SNH)
+        cur1 = conn1.cursor()
+        cur = conn.cursor()
+        cur.execute("SELECT username, password FROM users")
+        users = cur.fetchall()
+        for username, password, name, balance in users:
+            new_hashed_password = hash_password(password, new_salt)
+            cur1.execute("UPDATE users SET password = ? WHERE username = ?", (new_hashed_password, username))
+        conn.commit()
+        conn.close()
+        end_time = time.time()
+        global TIME_DOWN
+        TIME_DOWN += end_time - start_time
+    cur = conn.cursor()
+    cur.execute("SELECT balance FROM accounts WHERE username = ?", (username,))
+    balance_result = cur.fetchone()
+    conn.close()
+    if balance_result:
+        print(f"[+] Login successful for {username}. Account balance: ${balance_result[0]:.2f}")
+    else:
+        print(f"[+] Login successful for {username}. No account info found.")
+
+def update_username(new_username: str, password: str = None) -> int:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
     cur.execute("UPDATE users SET username = ? WHERE password = ?", (new_username, password))
@@ -161,3 +192,28 @@ def setup_info_db():
     conn.commit()
     conn.close()
     print("[+] info.db created (shared target database).")
+
+def setup_info_db_snh():
+    conn = sqlite3.connect("db/info_snh.db")
+    cur = conn.cursor()
+
+    cur.execute("DROP TABLE IF EXISTS accounts")
+    cur.execute("""
+        CREATE TABLE accounts (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            username  TEXT NOT NULL UNIQUE,
+            plaintext_password TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            balance   REAL NOT NULL
+        )
+    """)
+
+    for username, plaintext_password, full_name, balance in USERS:
+        cur.execute(
+            "INSERT INTO accounts (username, plaintext_password, full_name, balance) VALUES (?, ?, ?, ?)",
+            (username, plaintext_password, full_name, balance)
+        )
+
+    conn.commit()
+    conn.close()
+    print("[+] info_snh.db created (shared target database).")

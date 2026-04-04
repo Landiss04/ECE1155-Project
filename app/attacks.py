@@ -2,8 +2,9 @@ import sqlite3
 import hashlib
 import time
 
-from app.setup_db import ATTACK_LOG, INFO_LOG, is_valid_password, is_valid_username, access_info_db, update_username
+from app.setup_db import ATTACK_LOG, INFO_LOG, access_info_db_snh, is_valid_password, is_valid_username, access_info_db, update_username
 from app.setup_db import LOGIN_DB, LOGIN_SNH, ALLOWED_CHARS_PASSWORD, ALLOWED_CHARS_USERNAME
+from app.setup_db import hash_password, unhash_password
 
 # Usernames & passwords for each level of attack
 ATTACK_USERNAMES = [
@@ -18,10 +19,6 @@ ATTACK_PASSWORDS = [
     "",
     "",
 ]
-
-
-def hash_password(password: str, salt: str) -> str:
-    return hashlib.sha256((salt + password).encode()).hexdigest()
 
 def login1(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_DB)
@@ -82,7 +79,7 @@ def login3(username: str, password: str) -> bool:
     return False
 
 def login4(username: str, password: str) -> bool:
-    conn = sqlite3.connect(LOGIN_SNH)
+    conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
 
     # Input validation should still be in place to block obviously malicious inputs, even if parameterized queries are used.
@@ -100,6 +97,29 @@ def login4(username: str, password: str) -> bool:
         INFO_LOG.append((username, password))
         update_username(username, ATTACK_PASSWORDS[2]) # Change everyone with matching password to have the malicious username for second order injection
         return access_info_db(username)
+    else:
+        ATTACK_LOG.append(f"Failed parameterized login attempt for user: {username}, password: {password}")
+    return False
+
+def login5(username: str, password: str) -> bool:
+    conn = sqlite3.connect(LOGIN_SNH)
+    cur = conn.cursor()
+
+    # Input validation should still be in place to block obviously malicious inputs, even if parameterized queries are used.
+    if not is_valid_username(username) or not is_valid_password(password):
+        ATTACK_LOG.append(f"Blocked invalid input for user: {username}")
+        print(f"[-] Skipping invalid user: {username}")
+        return False
+    query = "SELECT * FROM users WHERE username = ? AND password = ?;"
+    cur.execute(query, (username, password))
+    result = cur.fetchone()
+    conn.close()
+
+    # Permit access to info database and return account balance if login successful, otherwise return False
+    if result:
+        INFO_LOG.append((username, password))
+        update_username(username, ATTACK_PASSWORDS[2]) # Change everyone with matching password to have the malicious username for second order injection
+        return access_info_db_snh(username, malicious=True)
     else:
         ATTACK_LOG.append(f"Failed parameterized login attempt for user: {username}, password: {password}")
     return False
@@ -136,21 +156,5 @@ def attack4() -> bool:
 # This simulates a breach detection system that could be implemented in a real application to prevent further damage after detecting an attack.
 def attack5() -> bool:
     # First perform the attack that should succeed with the known key
-    success = login4(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
-    if success:
-        start_time = time.time()
-        # Simulate breach detection and dynamic access control by rehashing all credentials with a new salt
-        new_salt = "newsalt123" # In a real system, this would be randomly generated and stored securely
-        conn = sqlite3.connect(LOGIN_SNH)
-        cur = conn.cursor()
-        cur.execute("SELECT username, password FROM users")
-        users = cur.fetchall()
-        for username, password in users:
-            new_hashed_password = hash_password(password, new_salt)
-            cur.execute("UPDATE users SET password = ? WHERE username = ?", (new_hashed_password, username))
-        conn.commit()
-        conn.close()
-        end_time = time.time()
-        global TIME_DOWN
-        TIME_DOWN += end_time - start_time
-    return success
+    return login4(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0]) or login4(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+
