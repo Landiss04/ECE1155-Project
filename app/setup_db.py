@@ -1,3 +1,4 @@
+from ast import main
 import hashlib
 import os
 import re
@@ -14,24 +15,27 @@ INFO_DB_SNH = "db/info_snh.db"
 def hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode()).hexdigest()
 
-def access_info_db(username: str) -> dict:
+def access_info_db(username: str) -> bool:
     conn = sqlite3.connect(INFO_DB)
     cur = conn.cursor()
-    cur.execute("SELECT balance FROM accounts WHERE username = ?", (username,))
+    query = "SELECT full_name, balance FROM accounts WHERE username = '" + username + "';"
+    cur.execute(query)
     balance_result = cur.fetchone()
     conn.close()
     if balance_result:
-        print(f"[+] Login successful for {username}. Account balance: ${balance_result[0]:.2f}")
+        print(f"[+] Login successful for {username}. Account balance: ${balance_result[1]}")
+        return True
     else:
         print(f"[+] Login successful for {username}. No account info found.")
+        return False
 
 def verify_password(plaintext: str, salt: str, hashed: str) -> bool:
     return hash_password(plaintext, salt) == hashed
 
-def update_username(new_username: str, password: str = None) -> int:
+def update_username(new_username: str, password: str = None, username: str = None) -> int:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
-    cur.execute("UPDATE users SET username = ? WHERE password = ?", (new_username, password))
+    cur.execute("UPDATE users SET username = ? WHERE password = ? AND username = ?", (new_username, password, username))
     conn.commit()
     conn.close()
 
@@ -77,7 +81,7 @@ TIME_DOWN = 0 # Total time the system is down due to detected breaches (for dyna
 # Acceptable characters for usernames and passwords (for input validation in Attack 2)
 # Usernames: letters + digits only. Passwords: letters, digits, and common symbols, no spaces.
 ALLOWED_CHARS_USERNAME = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-ALLOWED_CHARS_PASSWORD = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=,./?'\"")
+ALLOWED_CHARS_PASSWORD = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=,./?'")
 
 
 #note that claude was used to generate this code, as we deemed generating the databases 
@@ -88,7 +92,7 @@ ALLOWED_CHARS_PASSWORD = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
 # ---------------------------------------------------------------
 
 def setup_login():
-    conn = sqlite3.connect("db/login_vulnerable.db")
+    conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS users")
@@ -114,7 +118,7 @@ def setup_login():
 
 # Salt and hash all passwords
 def setup_login_snh():
-    conn = sqlite3.connect("db/login_snh.db")
+    conn = sqlite3.connect(LOGIN_SNH)
     cur = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS users")
@@ -145,7 +149,7 @@ def setup_login_snh():
 # ---------------------------------------------------------------
 
 def setup_info_db():
-    conn = sqlite3.connect("db/info.db")
+    conn = sqlite3.connect(INFO_DB)
     cur = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS accounts")
@@ -169,7 +173,7 @@ def setup_info_db():
     print("[+] info.db created (shared target database).")
 
 def setup_info_db_snh():
-    conn = sqlite3.connect("db/info_snh.db")
+    conn = sqlite3.connect(INFO_DB_SNH)
     cur = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS accounts")
@@ -192,3 +196,12 @@ def setup_info_db_snh():
     conn.commit()
     conn.close()
     print("[+] info_snh.db created (shared target database).")
+
+def main():
+    os.makedirs("db", exist_ok=True)
+    setup_info_db_snh()
+    setup_info_db()
+    setup_login()
+    setup_login_snh()
+
+main()
