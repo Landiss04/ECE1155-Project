@@ -25,33 +25,8 @@ def access_info_db(username: str) -> dict:
     else:
         print(f"[+] Login successful for {username}. No account info found.")
 
-def access_info_db_snh(username: str, malicious: bool) -> dict:
-    conn = sqlite3.connect(INFO_DB_SNH)
-    if malicious:
-        start_time = time.time()
-        # Simulate breach detection and dynamic access control by rehashing all credentials with a new salt
-        new_salt = "newsalt123" # In a real system, this would be randomly generated and stored securely
-        conn1 = sqlite3.connect(LOGIN_SNH)
-        cur1 = conn1.cursor()
-        cur = conn.cursor()
-        cur.execute("SELECT username, password FROM users")
-        users = cur.fetchall()
-        for username, password, name, balance in users:
-            new_hashed_password = hash_password(password, new_salt)
-            cur1.execute("UPDATE users SET password = ? WHERE username = ?", (new_hashed_password, username))
-        conn.commit()
-        conn.close()
-        end_time = time.time()
-        global TIME_DOWN
-        TIME_DOWN += end_time - start_time
-    cur = conn.cursor()
-    cur.execute("SELECT balance FROM accounts WHERE username = ?", (username,))
-    balance_result = cur.fetchone()
-    conn.close()
-    if balance_result:
-        print(f"[+] Login successful for {username}. Account balance: ${balance_result[0]:.2f}")
-    else:
-        print(f"[+] Login successful for {username}. No account info found.")
+def verify_password(plaintext: str, salt: str, hashed: str) -> bool:
+    return hash_password(plaintext, salt) == hashed
 
 def update_username(new_username: str, password: str = None) -> int:
     conn = sqlite3.connect(LOGIN_DB)

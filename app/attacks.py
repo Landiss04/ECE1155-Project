@@ -1,35 +1,45 @@
 import sqlite3
 import hashlib
 import time
+import random
 
 from app.setup_db import ATTACK_LOG, INFO_LOG, access_info_db_snh, is_valid_password, is_valid_username, access_info_db, update_username
 from app.setup_db import LOGIN_DB, LOGIN_SNH, ALLOWED_CHARS_PASSWORD, ALLOWED_CHARS_USERNAME
-from app.setup_db import hash_password, unhash_password
+from app.setup_db import hash_password, verify_password
 
 # Usernames & passwords for each level of attack
 ATTACK_USERNAMES = [
-    "OR 1=1",          # Basic injection for Attack 1
-    "attacker_user"     
+    "OR 1=1",       # Basic injection for Attack 1
+    "attacker_user" # Legitimate username for second order injection
 ]
 
 ATTACK_PASSWORDS = [
-    "OR 1=1",          # Basic injection for Attack 1
-    "0OR(1=1)#",       # More sophisticated injection that bypasses simple input checks for Attack 2
-    "password123",     # Matching password with jsmith for second order injection in Attack 3
+    "OR 1=1",       # Basic injection for Attack 1
+    "0OR(1=1)#",    # Sophisticated injection bypassing simple input checks for Attack 2
+    "password123",  # Matching password with jsmith for second order injection in Attack 3
     "",
     "",
+]
+
+# Attack weights — simpler attacks are more common
+# (attack_number, weight)
+ATTACK_WEIGHTS = [
+    (1, 50),   # Basic injection — very common
+    (2, 30),   # Input validation bypass — moderately common
+    (3, 15),   # Second order injection — less common, requires more knowledge
+    (4, 4),    # Salt and hash attack — rare, requires understanding of hashing
+    (5, 1),    # Breach detection bypass — extremely rare, requires insider knowledge
 ]
 
 def login1(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
 
-    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "';" 
-    cur.execute(query) 
+    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "';"
+    cur.execute(query)
     result = cur.fetchone()
     conn.close()
 
-    # Permit access to info database and return account balance if login successful, otherwise return False
     if result:
         INFO_LOG.append((username, password))
         return access_info_db(username)
@@ -41,7 +51,7 @@ def login2(username: str, password: str) -> bool:
 
     if not is_valid_username(username) or not is_valid_password(password):
         ATTACK_LOG.append(f"Blocked invalid input for user: {username}")
-        print(f"[-] Skipping invalid user: {username}")
+        print(f"[-] Input validation blocked: {username}")
         return False
 
     query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "';"
@@ -49,112 +59,205 @@ def login2(username: str, password: str) -> bool:
     result = cur.fetchone()
     conn.close()
 
-    # Permit access to info database and return account balance if login successful, otherwise return False
     if result:
         INFO_LOG.append((username, password))
         return access_info_db(username)
     return False
 
 def login3(username: str, password: str) -> bool:
-    conn = sqlite3.connect(LOGIN_DB)
+    conn = sqlite3.connect(LOGIN_DB)  # parameterized DB
     cur = conn.cursor()
 
-    # Input validation should still be in place to block obviously malicious inputs, even if parameterized queries are used.
     if not is_valid_username(username) or not is_valid_password(password):
         ATTACK_LOG.append(f"Blocked invalid input for user: {username}")
-        print(f"[-] Skipping invalid user: {username}")
+        print(f"[-] Input validation blocked: {username}")
         return False
+
     query = "SELECT * FROM users WHERE username = ? AND password = ?;"
     cur.execute(query, (username, password))
     result = cur.fetchone()
     conn.close()
 
-    # Permit access to info database and return account balance if login successful, otherwise return False
     if result:
         INFO_LOG.append((username, password))
-        update_username(username, ATTACK_PASSWORDS[2]) # Change everyone with matching password to have the malicious username for second order injection
+        update_username(username, ATTACK_PASSWORDS[2])
         return access_info_db(username)
     else:
-        ATTACK_LOG.append(f"Failed parameterized login attempt for user: {username}, password: {password}")
+        ATTACK_LOG.append(f"Failed parameterized login: {username}")
     return False
 
 def login4(username: str, password: str) -> bool:
-    conn = sqlite3.connect(LOGIN_DB)
+    conn = sqlite3.connect(LOGIN_SNH)  # salt and hash DB
     cur = conn.cursor()
 
-    # Input validation should still be in place to block obviously malicious inputs, even if parameterized queries are used.
     if not is_valid_username(username) or not is_valid_password(password):
         ATTACK_LOG.append(f"Blocked invalid input for user: {username}")
-        print(f"[-] Skipping invalid user: {username}")
+        print(f"[-] Input validation blocked: {username}")
         return False
-    query = "SELECT * FROM users WHERE username = ? AND password = ?;"
-    cur.execute(query, (username, password))
-    result = cur.fetchone()
+
+    # Fetch stored salt and hash for this username
+    cur.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
     conn.close()
 
-    # Permit access to info database and return account balance if login successful, otherwise return False
-    if result:
+    if row and verify_password(password, row[1], row[0]):
         INFO_LOG.append((username, password))
-        update_username(username, ATTACK_PASSWORDS[2]) # Change everyone with matching password to have the malicious username for second order injection
-        return access_info_db(username)
+        update_username(username, ATTACK_PASSWORDS[2])
+        return access_info_db_snh(username, malicious=True)
     else:
-        ATTACK_LOG.append(f"Failed parameterized login attempt for user: {username}, password: {password}")
+        ATTACK_LOG.append(f"Failed salt/hash login: {username}")
     return False
 
 def login5(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_SNH)
     cur = conn.cursor()
 
-    # Input validation should still be in place to block obviously malicious inputs, even if parameterized queries are used.
     if not is_valid_username(username) or not is_valid_password(password):
         ATTACK_LOG.append(f"Blocked invalid input for user: {username}")
-        print(f"[-] Skipping invalid user: {username}")
+        print(f"[-] Input validation blocked: {username}")
         return False
-    query = "SELECT * FROM users WHERE username = ? AND password = ?;"
-    cur.execute(query, (username, password))
-    result = cur.fetchone()
+
+    cur.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
     conn.close()
 
-    # Permit access to info database and return account balance if login successful, otherwise return False
-    if result:
+    if row and verify_password(password, row[1], row[0]):
         INFO_LOG.append((username, password))
-        update_username(username, ATTACK_PASSWORDS[2]) # Change everyone with matching password to have the malicious username for second order injection
+
+        # Breach detected — rehash all credentials with a new salt
+        print("[!] Breach detected — initiating dynamic access control...")
+        start_time = time.time()
+
+        new_salt = hashlib.sha256(str(time.time()).encode()).hexdigest()[:16]  # random new salt
+        conn = sqlite3.connect(LOGIN_SNH)
+        cur = conn.cursor()
+
+        # Fetch all plaintext passwords (only possible in this simulation context)
+        cur.execute("SELECT username, plaintext_password FROM users")
+        users = cur.fetchall()
+
+        for uname, plaintext in users:
+            new_hash = hash_password(plaintext, new_salt)
+            cur.execute(
+                "UPDATE users SET password = ?, salt = ? WHERE username = ?",
+                (new_hash, new_salt, uname)
+            )
+
+        conn.commit()
+        conn.close()
+
+        end_time = time.time()
+        global TIME_DOWN
+        TIME_DOWN += end_time - start_time
+        print(f"[+] Rehash complete in {end_time - start_time:.4f}s — second order payloads invalidated.")
+
         return access_info_db_snh(username, malicious=True)
     else:
-        ATTACK_LOG.append(f"Failed parameterized login attempt for user: {username}, password: {password}")
+        ATTACK_LOG.append(f"Failed breach detection login: {username}")
     return False
 
-# ATTACK 1 — Simple SQL Injection (login_vulnerable.db) ' OR '1'='1 -> bypasses login
-# Uses raw string concatenation, plaintext passwords.
-# Should be breakable with a basic OR '1'='1' injection.
+# Attack functions 
 def attack1() -> bool:
-    return login1(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    blocked = not login2(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])  # show validation blocking it
+    result = login1(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    print(f"  [Attack 1] Basic injection {'succeeded' if result else 'failed'}")
+    return result
 
-# ATTACK 2 — SQL Injection with valid inputs (login_input_check.db)
-# Will contain 2 attacks:
-# 1) Basic injection should be blocked by input validation.
-# 2) More sophisticated injection using parentheses/comments that bypasses simple input checks : 0OR(1=1)#
 def attack2() -> bool:
-    return login2(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0]) or login2(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[1])
+    result1 = login2(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    print(f"  [Attack 2a] Basic injection with validation: {'succeeded' if result1 else 'blocked'}")
 
-# ATTACK 3 — Second order SQL injection (login_parameterized.db)
-# Will contain 3 attacks:
-# 1) Basic injection should be blocked by input validation.
-# 2) More sophisticated injection using parentheses/comments that bypasses simple input checks : 0OR(1=1)#
-# 3) Second order injection. Insert normal username and password into database,
-# but take advantage of common passwords to change username to a malicious payload that allows login bypass
+    result2 = login2(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[1])
+    print(f"  [Attack 2b] Sophisticated bypass (0OR(1=1)#): {'succeeded' if result2 else 'blocked'}")
+
+    return result1 or result2
+
 def attack3() -> bool:
-    return login3(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0]) or login3(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    result1 = login3(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    print(f"  [Attack 3a] Basic injection with parameterization: {'succeeded' if result1 else 'blocked'}")
 
-# ATTACK 4 — All attacks but on salt and hash database
+    result2 = login3(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[1])
+    print(f"  [Attack 3b] Sophisticated bypass with parameterization: {'succeeded' if result2 else 'blocked'}")
+
+    result3 = login3(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    print(f"  [Attack 3c] Second order injection: {'succeeded' if result3 else 'failed'}")
+
+    return result1 or result2 or result3
+
 def attack4() -> bool:
-    return login4(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0]) or login4(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    result1 = login4(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    print(f"  [Attack 4a] Basic injection on hashed DB: {'succeeded' if result1 else 'blocked'}")
 
+    result2 = login4(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    print(f"  [Attack 4b] Second order on hashed DB: {'succeeded' if result2 else 'failed'}")
 
-# ATTACK 5 - Extra Credit
-# Key is known to attacker, dynamic access control should detect breach and rehash all credentials with new salt, preventing second order injection attack. 
-# This simulates a breach detection system that could be implemented in a real application to prevent further damage after detecting an attack.
+    return result1 or result2
+
 def attack5() -> bool:
-    # First perform the attack that should succeed with the known key
-    return login4(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0]) or login4(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    result1 = login5(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
+    print(f"  [Attack 5a] Basic injection with breach detection: {'succeeded' if result1 else 'blocked'}")
 
+    result2 = login5(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
+    print(f"  [Attack 5b] Second order with breach detection + rehash: {'succeeded' if result2 else 'invalidated'}")
+
+    return result1 or result2
+
+
+TIME_DOWN = 0.0
+ATTACK_FUNCTIONS = {
+    1: attack1,
+    2: attack2,
+    3: attack3,
+    4: attack4,
+    5: attack5,
+}
+
+def real_time_attack(num_attacks: int = 20, delay: float = 0.5):
+    
+    attack_numbers = [a for a, _ in ATTACK_WEIGHTS]
+    weights        = [w for _, w in ATTACK_WEIGHTS]
+
+    print(f"\n{'='*50}")
+    print(f"Starting real-time attack simulation ({num_attacks} attacks)")
+    print(f"{'='*50}\n")
+
+    for i in range(num_attacks):
+        # Weighted random selection — simpler attacks more likely
+        chosen = random.choices(attack_numbers, weights=weights, k=1)[0]
+        attack_fn = ATTACK_FUNCTIONS[chosen]
+
+        print(f"[{i+1}/{num_attacks}] Launching Attack {chosen}...")
+        success = attack_fn()
+
+        time.sleep(delay)
+
+    # Display logs
+    print(f"\n{'='*50}")
+    print("Attack Log:")
+    for entry in ATTACK_LOG:
+        print(f"  - {entry}")   
+    print(f"\n{'='*50}")
+    print("Info Log (successful accesses):")
+    for username, password in INFO_LOG:
+        print(f"  - Username: {username}, Password: {password}")
+    print(f"\nTotal system downtime from rehashing: {TIME_DOWN:.4f}s")
+
+
+def main():
+    print("Running Attack 1...")
+    print(f"Attack 1 successful: {attack1()}\n")
+
+    print("Running Attack 2...")
+    print(f"Attack 2 successful: {attack2()}\n")
+
+    print("Running Attack 3...")
+    print(f"Attack 3 successful: {attack3()}\n")
+
+    print("Running Attack 4...")
+    print(f"Attack 4 successful: {attack4()}\n")
+
+    print("Running Attack 5...")
+    print(f"Attack 5 successful: {attack5()}\n")
+
+    print("Running real-time simulation...")
+    real_time_attack(num_attacks=20, delay=0.5)
