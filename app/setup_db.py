@@ -9,7 +9,7 @@ from time import time
 LOGIN_DB = "db/login.db"
 LOGIN_SNH = "db/login_snh.db"
 INFO_DB = "db/info.db"
-INFO_DB_SNH = "db/info_snh.db"
+INFO_SNH = "db/info_snh.db" 
 
 # --- Helpers ---
 def hash_password(password: str, salt: str) -> str:
@@ -18,8 +18,7 @@ def hash_password(password: str, salt: str) -> str:
 def access_info_db(username: str) -> bool:
     conn = sqlite3.connect(INFO_DB)
     cur = conn.cursor()
-    query = "SELECT full_name, balance FROM accounts WHERE username = '" + username + "';"
-    cur.execute(query)
+    cur.execute("SELECT full_name, balance FROM accounts WHERE username = ?", (username,))
     balance_result = cur.fetchone()
     conn.close()
     if balance_result:
@@ -32,12 +31,20 @@ def access_info_db(username: str) -> bool:
 def verify_password(plaintext: str, salt: str, hashed: str) -> bool:
     return hash_password(plaintext, salt) == hashed
 
-def update_username(new_username: str, password: str = None, username: str = None) -> int:
+def update_username(new_username: str, password: str = None, username: str = None) -> bool:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
-    cur.execute("UPDATE users SET username = ? WHERE password = ? AND username = ?", (new_username, password, username))
-    conn.commit()
+    # Retrieve subject user
+    query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
+    cur.execute(query)
+    result = cur.fetchone()
+    if result[1] != new_username: # Prevent self-injection, only inject on other users
+        update_query = f"UPDATE users SET username = '{new_username}' WHERE id = {result[0]}"
+        cur.execute(update_query)
+        conn.commit()
+        return True
     conn.close()
+    return False
 
 def is_valid_username(username: str) -> bool:
     """Check if username contains only allowed characters."""
@@ -99,7 +106,7 @@ def setup_login():
     cur.execute("""
         CREATE TABLE users (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
+            username TEXT NOT NULL,
             password TEXT NOT NULL
         )
     """)
@@ -173,7 +180,7 @@ def setup_info_db():
     print("[+] info.db created (shared target database).")
 
 def setup_info_db_snh():
-    conn = sqlite3.connect(INFO_DB_SNH)
+    conn = sqlite3.connect(INFO_SNH)
     cur = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS accounts")

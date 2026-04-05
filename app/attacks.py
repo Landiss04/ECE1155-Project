@@ -4,7 +4,7 @@ import time
 import random
 
 from setup_db import ATTACK_LOG, INFO_LOG, is_valid_password, is_valid_username, access_info_db, update_username
-from setup_db import LOGIN_DB, LOGIN_SNH
+from setup_db import LOGIN_DB, LOGIN_SNH, INFO_DB, INFO_SNH
 from setup_db import hash_password, verify_password
 
 # Usernames & passwords for each level of attack
@@ -78,22 +78,31 @@ def login3(username: str, password: str) -> bool:
     query = "SELECT * FROM users WHERE username = ? AND password = ?;"
     cur.execute(query, (username, password))
     result = cur.fetchone()
-    if not result and username == ATTACK_USERNAMES[1] and password == ATTACK_PASSWORDS[2]:
+    if not result:
         ATTACK_LOG.append(f"Failed parameterized login: {username}")
+        print(f"  [Attack 3b] Sophisticated bypass with parameterization: {'succeeded' if result else 'blocked'}")
 
-        # Add user to database since safe inputs
-        cur.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        # Add user to database since "safe" inputs
+        cur.execute(
+            "INSERT INTO users (username, password) VALUES (?, ?)",
+            (username, password)
+        )
         conn.commit()
         conn.close()
-        # Perform second order injection by updating username to attack payload
-        update_username(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[2], ATTACK_USERNAMES[1])
-        return access_info_db(ATTACK_USERNAMES[0])
+        # Perform second order injection by updating username with malicous password
+        result = update_username(username, password, username)
+        if result:
+            INFO_LOG.append((username, password))  # DoS attack to block user access by changing username
+            return True
+        else:
+            ATTACK_LOG.append(f"Failed second order injection: {username}")
+            return False
     else:        
         ATTACK_LOG.append(f"Failed parameterized login: {username}")
     return False
 
 def login4(username: str, password: str) -> bool:
-    conn = sqlite3.connect(LOGIN_SNH)  # salt and hash DB
+    conn = sqlite3.connect(LOGIN_SNH)  # parameterized DB
     cur = conn.cursor()
 
     if not is_valid_username(username) or not is_valid_password(password):
@@ -101,21 +110,40 @@ def login4(username: str, password: str) -> bool:
         print(f"[-] Input validation blocked: {username}")
         return False
 
-    # Fetch stored salt and hash for this username
-    cur.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    row = cur.fetchone()
-    conn.close()
+    # Retrieve salt
+    cur.execute("SELECT salt FROM users WHERE username = ?", (username,))
+    salt = cur.fetchone()
+    hash_value = hash_password(password, salt[0] if salt else "")
+    query = "SELECT * FROM users WHERE username = ? AND hash = ?;"
+    cur.execute(query, (username, hash_value))
+    result = cur.fetchone()
+    if result:
+        ATTACK_LOG.append(f"Failed parameterized login: {username}")
+        print(f"  [Attack 4] Sophisticated bypass with parameterization: {'succeeded' if result else 'blocked'}")
 
-    if row and verify_password(password, row[1], row[0]):
-        INFO_LOG.append((username, password))
-        update_username(username, ATTACK_PASSWORDS[2])
-        return access_info_db(username)
-    else:
-        ATTACK_LOG.append(f"Failed salt/hash login: {username}")
+        # Add user to database since "safe" inputs
+        salt = hashlib.sha256(str(time.time()).encode()).hexdigest()[:16]  # random salt
+        hash_value = hash_password(password, salt)
+        cur.execute(
+            "INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)",
+            (username, salt, hash_value)
+        )
+        conn.commit()
+        conn.close()
+        # Perform second order injection by updating username with malicous password
+        result = update_username(username, password, username)
+        if result:
+            INFO_LOG.append((username, password))  # DoS attack to block user access by changing username
+            return True
+        else:
+            ATTACK_LOG.append(f"Failed second order injection: {username}")
+            return False
+    else:        
+        ATTACK_LOG.append(f"Failed parameterized login: {username}")
     return False
 
 def login5(username: str, password: str) -> bool:
-    conn = sqlite3.connect(LOGIN_SNH)
+    conn = sqlite3.connect(INFO_SNH)
     cur = conn.cursor()
 
     if not is_valid_username(username) or not is_valid_password(password):
@@ -123,11 +151,21 @@ def login5(username: str, password: str) -> bool:
         print(f"[-] Input validation blocked: {username}")
         return False
 
-    cur.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    row = cur.fetchone()
+    # Simulate brute force. Attacker was able to retrieve password from hash and salt
+    cur.execute("SELECT plaintext_password FROM accounts WHERE username = ?", ("jsmith",))
+    plaintext_password = cur.fetchone()
+    conn.close()
+    conn = sqlite3.connect(LOGIN_SNH)
+    cur = conn.cursor()
+    cur.execute("SELECT salt FROM users WHERE username = ?", ("jsmith",))
+    salt = cur.fetchone()
+    hash_value = hash_password(plaintext_password[0], salt[0])
+    query = "SELECT * FROM users WHERE username = ? AND hash = ?;"
+    cur.execute(query, ("jsmith", hash_value))
+    result = cur.fetchone()
     conn.close()
 
-    if row and verify_password(password, row[1], row[0]):
+    if result:
         INFO_LOG.append((username, password))
 
         # Rehash all with new salt
@@ -139,13 +177,17 @@ def login5(username: str, password: str) -> bool:
         cur = conn.cursor()
 
         # Get all plaintext passwords
-        cur.execute("SELECT username, plaintext_password FROM users")
-        users = cur.fetchall()
+        conn1 = sqlite3.connect(INFO_SNH)
+        cur1 = conn1.cursor()
+        cur1.execute("SELECT username, plaintext_password FROM accounts")
+        users = cur1.fetchall()
+        conn1.close()
+
 
         for uname, plaintext in users:
             new_hash = hash_password(plaintext, new_salt)
             cur.execute(
-                "UPDATE users SET password = ?, salt = ? WHERE username = ?",
+                "UPDATE users SET hash = ?, salt = ? WHERE username = ?",
                 (new_hash, new_salt, uname)
             )
 
@@ -182,12 +224,9 @@ def attack3() -> bool:
     print(f"  [Attack 3a] Basic injection with parameterization: {'succeeded' if result1 else 'blocked'}")
 
     result2 = login3(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[1])
-    print(f"  [Attack 3b] Sophisticated bypass with parameterization: {'succeeded' if result2 else 'blocked'}")
+    print(f"  [Attack 3c] Second order injection: {'succeeded' if result2 else 'failed'}")
 
-    result3 = login3(ATTACK_USERNAMES[1], ATTACK_PASSWORDS[2])
-    print(f"  [Attack 3c] Second order injection: {'succeeded' if result3 else 'failed'}")
-
-    return result1 or result2 or result3
+    return result1 or result2
 
 def attack4() -> bool:
     result1 = login4(ATTACK_USERNAMES[0], ATTACK_PASSWORDS[0])
