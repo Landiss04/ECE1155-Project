@@ -15,19 +15,25 @@ INFO_SNH = "db/info_snh.db"
 def hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode()).hexdigest()
 
+#helper function that given a valid login session will display the user data to the dashboard
 def access_info_db(username: str) -> bool:
     conn = sqlite3.connect(INFO_DB)
     cur = conn.cursor()
     cur.execute("SELECT full_name, balance FROM accounts WHERE username = ?", (username,))
-    balance_result = cur.fetchone()
+    result = cur.fetchone()
     conn.close()
-    if balance_result:
-        print(f"[+] Login successful for {username}. Account balance: ${balance_result[1]}")
-        return True
-    else:
-        print(f"[+] Login successful for {username}. No account info found.")
-        return False
+    return result is not None
 
+def get_account_info(username: str):
+    conn = sqlite3.connect(INFO_DB)
+    cur = conn.cursor()
+    cur.execute("SELECT full_name, balance FROM accounts WHERE username = ?", (username,))
+    result = cur.fetchone()
+    conn.close()
+    if result:
+        return {"full_name": result[0], "balance": result[1]}
+    else:
+        return None
 def verify_password(plaintext: str, salt: str, hashed: str) -> bool:
     return hash_password(plaintext, salt) == hashed
 

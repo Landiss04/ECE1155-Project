@@ -2,7 +2,7 @@ from flask import Flask, redirect, render_template, request, url_for, session
 from attacks import attack1, attack2, attack3, attack4, attack5
 from attacks import login1, login2, login3, login4, login5
 from attacks import ATTACK_LOG, INFO_LOG, real_time_attack
-from setup_db import access_info_db
+from setup_db import access_info_db, get_account_info
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'securedatabase'
@@ -47,7 +47,7 @@ def login():
 
     return render_template('login.html', level=level)
 
-@app.route('/dashboard')
+@app.route('/dashboard', methods=['GET'])
 def dashboard():
     # Redirect to login if no session
     username = session.get('username')
@@ -58,9 +58,9 @@ def dashboard():
 
     # Use the correct info DB depending on attack level
     if level >= 4:
-        account = access_info_db(username)
+        account = get_account_info(username)
     else:
-        account = access_info_db(username)
+        account = get_account_info(username)
 
     return render_template(
         'dashboard.html',

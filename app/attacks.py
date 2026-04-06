@@ -30,6 +30,7 @@ ATTACK_WEIGHTS = [
     (5, 1), 
 ]
 
+#login1 - insecure login with plaintext passwords and no input validation
 def login1(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
@@ -44,6 +45,7 @@ def login1(username: str, password: str) -> bool:
         return access_info_db(username)
     return False
 
+#login2 - adds input validation but still vulnerable to sophisticated payloads that bypass checks
 def login2(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_DB)
     cur = conn.cursor()
@@ -66,6 +68,7 @@ def login2(username: str, password: str) -> bool:
         return access_info_db(retrieved_username)
     return False
 
+#login3 - uses parameterized queries to prevent injection but vulnerable to second order injection by updating username with malicious password after initial login
 def login3(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_DB)  # parameterized DB
     cur = conn.cursor()
@@ -101,6 +104,7 @@ def login3(username: str, password: str) -> bool:
         ATTACK_LOG.append(f"Failed parameterized login: {username}")
     return False
 
+#login4 - uses parameterized queries and hashed passwords but vulnerable to second order injection by updating username with malicious password after initial login
 def login4(username: str, password: str) -> bool:
     conn = sqlite3.connect(LOGIN_SNH)  # parameterized DB
     cur = conn.cursor()
@@ -142,6 +146,8 @@ def login4(username: str, password: str) -> bool:
         ATTACK_LOG.append(f"Failed parameterized login: {username}")
     return False
 
+#login5 - uses parameterized queries, hashed passwords, and breach detection with dynamic access control by rehashing all passwords with a new salt if a breach is detected. 
+# This prevents second order injection from invalidating all hashes since they will be rehashed with a new salt.
 def login5(username: str, password: str) -> bool:
     conn = sqlite3.connect(INFO_SNH)
     cur = conn.cursor()
