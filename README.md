@@ -1,7 +1,6 @@
 # SQL Injection Attacks and Countermeasures: A Simulated Banking System Case Study
 
 **Authors:** Landis Strohecker (lrs126@pitt.edu) | Harry Tye (hit24@pitt.edu)  
-**Institution:** University of Pittsburgh
 
 ---
 
@@ -44,13 +43,13 @@ This project simulates a banking web application that demonstrates SQL injection
 ```
 ECE1155-Project/
 ├── app/
-│   ├── banking_app.py          # Flask application (login + dashboard)
-│   ├── attacks.py              # Attack simulation script (RUN THIS)
+│   ├── banking_app.py          # Login page
+│   ├── attacks.py              # Attack simulation script 
 │   ├── setup_db.py             # Database initialization
 │   └── templates/
 │       ├── login.html
 │       └── dashboard.html
-├── db/                         # SQLite databases (auto-created)
+├── db/                         # SQLite databases 
 ├── README.md
 ```
 
